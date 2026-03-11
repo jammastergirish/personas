@@ -32,6 +32,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report
 from sklearn.model_selection import StratifiedKFold
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -502,6 +503,181 @@ def linear_probe_accuracy(
 
 
 # ============================================================
+# Multi-seed evaluation (improvement 6)
+# ============================================================
+
+def multi_seed_eval(
+    vectors: torch.Tensor,
+    labels: List[int],
+    persona_vocab: List[str],
+    k: int,
+    n_seeds: int = 10,
+    n_folds: int = 5,
+) -> Dict[str, any]:
+    """
+    Run k-means and linear probe across multiple seeds.
+    Returns mean, std for each metric.
+    """
+    purities = []
+    probe_accs = []
+
+    for seed in range(n_seeds):
+        # K-means
+        pred_labels, _ = kmeans_torch(vectors, k=k, n_iters=50, seed=seed)
+        purity = clustering_purity(pred_labels, labels, k=k)
+        purities.append(purity)
+
+        # Linear probe
+        acc = linear_probe_accuracy(vectors, labels, n_folds=n_folds, seed=seed)
+        probe_accs.append(acc)
+
+    return {
+        "kmeans_purity_mean": float(np.mean(purities)),
+        "kmeans_purity_std": float(np.std(purities)),
+        "probe_accuracy_mean": float(np.mean(probe_accs)),
+        "probe_accuracy_std": float(np.std(probe_accs)),
+    }
+
+
+# ============================================================
+# Per-persona F1 scores (improvement 7)
+# ============================================================
+
+def per_persona_f1(
+    vectors: torch.Tensor,
+    labels: List[int],
+    persona_vocab: List[str],
+    seed: int = 0,
+) -> Dict[str, Dict[str, float]]:
+    """
+    Train a logistic regression on 80% of data, evaluate per-class
+    precision/recall/F1 on the held-out 20%.
+    """
+    X = vectors.numpy()
+    y = np.array(labels)
+
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+    # Use just the first fold for a clean report
+    train_idx, test_idx = next(iter(skf.split(X, y)))
+
+    clf = LogisticRegression(max_iter=2000, solver="lbfgs", C=1.0)
+    clf.fit(X[train_idx], y[train_idx])
+    y_pred = clf.predict(X[test_idx])
+
+    report = classification_report(
+        y[test_idx], y_pred,
+        target_names=persona_vocab,
+        output_dict=True,
+        zero_division=0,
+    )
+    return report
+
+
+def plot_per_persona_f1(
+    report: Dict,
+    persona_vocab: List[str],
+    layer: int,
+    outdir: Path,
+) -> None:
+    personas = persona_vocab
+    f1s = [report[p]["f1-score"] for p in personas]
+    precisions = [report[p]["precision"] for p in personas]
+    recalls = [report[p]["recall"] for p in personas]
+
+    x = np.arange(len(personas))
+    width = 0.25
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(x - width, precisions, width, label="Precision", alpha=0.85)
+    ax.bar(x, recalls, width, label="Recall", alpha=0.85)
+    ax.bar(x + width, f1s, width, label="F1", alpha=0.85)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(personas, rotation=45, ha="right")
+    ax.set_ylabel("Score")
+    ax.set_title(f"Per-persona classification metrics - layer {layer}")
+    ax.set_ylim(0, 1.1)
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(outdir / f"layer_{layer:02d}_per_persona_f1.png", dpi=180)
+    plt.close()
+
+
+# ============================================================
+# Persona subspace dimensionality (improvement 8)
+# ============================================================
+
+def persona_subspace_analysis(
+    vectors: torch.Tensor,
+    persona_names: List[str],
+    layer: int,
+    outdir: Path,
+) -> Dict[str, float]:
+    """
+    Compute PCA on the persona centroids to find how many dimensions
+    capture the persona variance. Also compute variance explained
+    on all vectors projected into persona-subspace.
+    """
+    personas = sorted(set(persona_names))
+    persona_to_vecs = {p: [] for p in personas}
+    for v, p in zip(vectors, persona_names):
+        persona_to_vecs[p].append(v)
+
+    centroids = []
+    for p in personas:
+        mat = torch.stack(persona_to_vecs[p], dim=0)
+        centroids.append(mat.mean(dim=0))
+    centroid_mat = torch.stack(centroids, dim=0)  # [k, d]
+
+    # PCA on centroids
+    centroid_centered = centroid_mat - centroid_mat.mean(dim=0, keepdim=True)
+    U, S, V = torch.linalg.svd(centroid_centered, full_matrices=False)
+    variance = (S ** 2) / (S ** 2).sum()
+    cumvar = torch.cumsum(variance, dim=0)
+
+    # Also do PCA on all vectors to see total vs persona variance
+    all_centered = vectors - vectors.mean(dim=0, keepdim=True)
+    _, S_all, _ = torch.linalg.svd(all_centered, full_matrices=False)
+    variance_all = (S_all ** 2) / (S_all ** 2).sum()
+    cumvar_all = torch.cumsum(variance_all, dim=0)
+
+    # How many dims to capture 95% / 99% of persona variance?
+    dims_95 = int((cumvar >= 0.95).nonzero(as_tuple=True)[0][0].item()) + 1
+    dims_99 = int((cumvar >= 0.99).nonzero(as_tuple=True)[0][0].item()) + 1
+
+    # Plot
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    n_show = min(len(S), 8)
+    axes[0].bar(range(n_show), variance[:n_show].numpy(), color="tab:blue", alpha=0.8)
+    axes[0].set_xlabel("Principal component")
+    axes[0].set_ylabel("Variance explained")
+    axes[0].set_title(f"Persona centroid PCA - layer {layer}\n({dims_95} dims for 95%, {dims_99} dims for 99%)")
+    axes[0].set_xticks(range(n_show))
+
+    n_show_all = min(50, len(S_all))
+    axes[1].plot(range(n_show_all), cumvar_all[:n_show_all].numpy(), marker=".", label="All vectors", color="tab:orange")
+    axes[1].plot(range(n_show), cumvar[:n_show].numpy(), marker="o", label="Persona centroids", color="tab:blue")
+    axes[1].axhline(0.95, color="gray", linestyle="--", alpha=0.5, label="95%")
+    axes[1].set_xlabel("Number of components")
+    axes[1].set_ylabel("Cumulative variance explained")
+    axes[1].set_title(f"Cumulative variance - layer {layer}")
+    axes[1].legend()
+
+    plt.tight_layout()
+    plt.savefig(outdir / f"layer_{layer:02d}_subspace_dims.png", dpi=180)
+    plt.close()
+
+    return {
+        "persona_dims_95": dims_95,
+        "persona_dims_99": dims_99,
+        "pc1_variance": float(variance[0].item()),
+        "pc2_variance": float(variance[1].item()) if len(variance) > 1 else 0.0,
+        "pc3_variance": float(variance[2].item()) if len(variance) > 2 else 0.0,
+    }
+
+
+# ============================================================
 # Plotting helpers (unchanged + new)
 # ============================================================
 
@@ -684,6 +860,7 @@ def analyze_layer(
     layer: int,
     outdir: Path,
     seed: int,
+    n_seeds: int = 10,
     suffix: str = "",
 ) -> Dict:
     """Run all per-layer analyses and return a metrics dict."""
@@ -706,13 +883,27 @@ def analyze_layer(
     # Improvement 4: linear probe
     probe_acc = linear_probe_accuracy(vectors, persona_ids, n_folds=5, seed=seed)
 
+    # Improvement 6: multi-seed evaluation
+    ms = multi_seed_eval(vectors, persona_ids, persona_vocab, k=len(persona_vocab), n_seeds=n_seeds)
+
+    # Improvement 7: per-persona F1
+    report = per_persona_f1(vectors, persona_ids, persona_vocab, seed=seed)
+    plot_per_persona_f1(report, persona_vocab, layer, outdir)
+    per_persona = {f"f1_{p}": report[p]["f1-score"] for p in persona_vocab}
+
+    # Improvement 8: persona subspace dimensionality
+    subspace = persona_subspace_analysis(vectors, persona_names, layer, outdir)
+
     row = {
         "layer": layer,
         "n_examples": vectors.shape[0],
         "n_personas": len(persona_vocab),
         "kmeans_persona_purity": purity,
         "linear_probe_accuracy": probe_acc,
+        **ms,
+        **subspace,
         **pair_metrics,
+        **per_persona,
     }
     return row
 
@@ -797,10 +988,10 @@ def run(args: argparse.Namespace) -> None:
         row = analyze_layer(
             vectors, persona_names, question_texts,
             persona_ids, question_ids, persona_vocab,
-            layer, outdir, args.seed,
+            layer, outdir, args.seed, n_seeds=args.n_seeds,
         )
         metrics_rows.append(row)
-        print(json.dumps(row, indent=2))
+        print(json.dumps({k: v for k, v in row.items() if not k.startswith("f1_")}, indent=2))
 
     # ---- Improvement 3: null baseline with rephrased personas ----
     if not args.skip_null_baseline:
@@ -919,13 +1110,20 @@ def run(args: argparse.Namespace) -> None:
     metrics_df = pd.DataFrame(metrics_rows).sort_values("layer")
     metrics_df.to_csv(outdir / "layer_metrics.csv", index=False)
 
-    # Purity + linear probe plot
+    # Purity + linear probe plot WITH ERROR BARS
     fig, ax1 = plt.subplots(figsize=(8, 5))
-    ax1.plot(metrics_df["layer"], metrics_df["kmeans_persona_purity"], marker="o", color="tab:blue", label="k-means purity")
-    ax1.plot(metrics_df["layer"], metrics_df["linear_probe_accuracy"], marker="s", color="tab:red", label="linear probe accuracy")
+    layers = metrics_df["layer"].values
+    ax1.errorbar(
+        layers, metrics_df["kmeans_purity_mean"], yerr=metrics_df["kmeans_purity_std"],
+        marker="o", color="tab:blue", capsize=4, label=f"k-means purity (mean ± std, n={args.n_seeds} seeds)",
+    )
+    ax1.errorbar(
+        layers, metrics_df["probe_accuracy_mean"], yerr=metrics_df["probe_accuracy_std"],
+        marker="s", color="tab:red", capsize=4, label=f"linear probe (mean ± std, n={args.n_seeds} seeds)",
+    )
     ax1.set_xlabel("Layer")
     ax1.set_ylabel("Score")
-    ax1.set_title("Persona classification by layer")
+    ax1.set_title("Persona classification by layer (with error bars)")
     ax1.legend()
     plt.tight_layout()
     plt.savefig(outdir / "persona_purity_by_layer.png", dpi=180)
@@ -940,6 +1138,41 @@ def run(args: argparse.Namespace) -> None:
     plt.legend()
     plt.tight_layout()
     plt.savefig(outdir / "separation_gaps_by_layer.png", dpi=180)
+    plt.close()
+
+    # Per-persona F1 heatmap across layers
+    f1_cols = [c for c in metrics_df.columns if c.startswith("f1_")]
+    if f1_cols:
+        f1_data = metrics_df[f1_cols].values  # [n_layers, n_personas]
+        persona_labels = [c.replace("f1_", "") for c in f1_cols]
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        im = ax.imshow(f1_data.T, aspect="auto", cmap="RdYlGn", vmin=0, vmax=1)
+        plt.colorbar(im, ax=ax, label="F1 score")
+        for i in range(len(persona_labels)):
+            for j in range(len(layers)):
+                ax.text(j, i, f"{f1_data[j, i]:.2f}", ha="center", va="center", fontsize=7)
+        ax.set_xticks(range(len(layers)))
+        ax.set_xticklabels(layers.astype(int))
+        ax.set_yticks(range(len(persona_labels)))
+        ax.set_yticklabels(persona_labels)
+        ax.set_xlabel("Layer")
+        ax.set_title("Per-persona F1 score across layers")
+        plt.tight_layout()
+        plt.savefig(outdir / "per_persona_f1_heatmap.png", dpi=180)
+        plt.close()
+
+    # Subspace dimensionality summary
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(layers, metrics_df["persona_dims_95"], marker="o", label="dims for 95% persona variance")
+    ax.plot(layers, metrics_df["persona_dims_99"], marker="s", label="dims for 99% persona variance")
+    ax.set_xlabel("Layer")
+    ax.set_ylabel("Number of dimensions")
+    ax.set_title("Persona subspace dimensionality by layer")
+    ax.legend()
+    ax.set_ylim(0, max(metrics_df["persona_dims_99"].max() + 1, 8))
+    plt.tight_layout()
+    plt.savefig(outdir / "subspace_dimensionality.png", dpi=180)
     plt.close()
 
     if args.generate_answers:
@@ -961,12 +1194,16 @@ def run(args: argparse.Namespace) -> None:
         "n_questions": len(question_vocab),
         "n_examples": len(examples),
         "representation": "last input token hidden state before generation",
+        "n_seeds": args.n_seeds,
         "improvements": [
             "confusion_matrix",
             "expanded_questions_40",
             "null_baseline_rephrased_personas",
             "linear_probe_logreg",
             "generated_token_activations",
+            "multi_seed_error_bars",
+            "per_persona_f1",
+            "persona_subspace_dimensionality",
         ],
     }
     with open(outdir / "run_config.json", "w") as f:
@@ -993,6 +1230,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit-questions", type=int, default=0)
     parser.add_argument("--generate-answers", action="store_true")
     parser.add_argument("--max-new-tokens", type=int, default=80)
+    parser.add_argument("--n-seeds", type=int, default=10, help="Number of seeds for multi-seed evaluation")
     parser.add_argument("--skip-null-baseline", action="store_true", help="Skip rephrased-persona baseline")
     parser.add_argument("--skip-gen-activations", action="store_true", help="Skip generated-token analysis")
     return parser.parse_args()
