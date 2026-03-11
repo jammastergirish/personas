@@ -6,6 +6,7 @@
 #   "matplotlib>=3.8",
 #   "pandas>=2.2",
 #   "python-dotenv>=1.0",
+#   "accelerate",
 # ]
 # ///
 
