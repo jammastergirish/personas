@@ -7,6 +7,8 @@
 #   "pandas>=2.2",
 #   "python-dotenv>=1.0",
 #   "accelerate",
+#   "scikit-learn>=1.4",
+#   "numpy>=1.26",
 # ]
 # ///
 
@@ -25,9 +27,12 @@ from dotenv import load_dotenv
 load_dotenv()  # loads HF_TOKEN (and any other vars) from .env
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -44,8 +49,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 #   4. Compare these vectors across personas/questions.
 #   5. Plot 2D PCA projections and compute simple clustering metrics.
 #
-# This is deliberately a FIRST PASS experiment. If you see separation,
-# the natural follow-up is to inspect generated-token activations too.
+# V2 improvements:
+#   - Confusion matrices for k-means clusters (improvement 1)
+#   - 40 diverse questions across many domains (improvement 2)
+#   - Null baseline with rephrased persona instructions (improvement 3)
+#   - Linear probe (logistic regression) accuracy (improvement 4)
+#   - Generated-token hidden state analysis (improvement 5)
 # ============================================================
 
 
@@ -60,17 +69,69 @@ PERSONAS: Dict[str, str] = {
     "kind_teacher": "You are a warm teacher. Answer gently, clearly, and pedagogically.",
 }
 
+# Rephrased persona instructions with identical meaning but different surface tokens.
+# Used for the null-baseline experiment (improvement 3).
+PERSONAS_ALT: Dict[str, str] = {
+    "assistant": "You are a reliable and considerate AI helper. Respond with clarity and honesty.",
+    "pirate": "You are a seafaring buccaneer. Respond using nautical slang and bold, swashbuckling flair.",
+    "lawyer": "You are a precise attorney. Respond with legal exactness, hedging, and careful qualifications.",
+    "scientist": "You are a research scientist. Respond with analytical rigor, caution, and step-by-step logic.",
+    "comedian": "You are a stand-up comic. Respond with humor, wordplay, and snappy one-liners.",
+    "stoic": "You are a philosopher in the Stoic tradition. Respond with brevity, composure, and detachment.",
+    "conspiracy_host": "You are a dramatic conspiracy-theory broadcaster. Respond with paranoid suspicion and theatrical flair.",
+    "kind_teacher": "You are a gentle, encouraging educator. Respond with patience, warmth, and clear explanations.",
+}
+
+# Expanded question set: 40 questions across diverse domains (improvement 2)
 QUESTIONS: List[str] = [
+    # Science / nature
     "Why do eclipses happen?",
-    "Should governments regulate advanced AI systems?",
-    "What is the best way to comfort a friend after a failure?",
-    "Why did the Roman Empire fall?",
     "Is nuclear energy a good idea?",
-    "How should a journalist verify a leaked document?",
     "What causes inflation?",
+    "How does a vaccine work?",
+    "Why is the sky blue?",
+    # Policy / ethics
+    "Should governments regulate advanced AI systems?",
     "Should children learn more than one language?",
     "Why do people disagree about moral issues?",
+    "Is universal basic income a realistic policy?",
+    "Should social media platforms censor misinformation?",
+    # Personal / emotional
+    "What is the best way to comfort a friend after a failure?",
+    "How do you deal with loneliness?",
+    "What advice would you give someone going through a breakup?",
+    "How can a person build self-confidence?",
+    "What should you do when you feel overwhelmed?",
+    # History / culture
+    "Why did the Roman Empire fall?",
+    "What caused the French Revolution?",
+    "Why is the Mona Lisa so famous?",
+    "How did the printing press change the world?",
+    "What lessons can we learn from the Cold War?",
+    # Practical / everyday
+    "How should a journalist verify a leaked document?",
     "What should someone do before investing in a volatile stock?",
+    "How do I make a good cup of coffee?",
+    "What is the best way to prepare for a job interview?",
+    "How do you fix a leaky faucet?",
+    # Technical / analytical
+    "Explain how a binary search algorithm works.",
+    "What is the difference between TCP and UDP?",
+    "How does encryption keep data secure?",
+    "What makes a good database index?",
+    "Why is recursion useful in programming?",
+    # Philosophy / abstract
+    "What is consciousness?",
+    "Can machines truly think?",
+    "Is free will an illusion?",
+    "What makes an action morally right?",
+    "Does objective truth exist?",
+    # Creative / open-ended
+    "If you could redesign education from scratch, what would it look like?",
+    "What would a perfect city look like?",
+    "How would you explain music to someone who has never heard sound?",
+    "What is the most important invention in human history?",
+    "If animals could talk, how would society change?",
 ]
 
 
@@ -152,8 +213,8 @@ def pca_2d_torch(x: torch.Tensor) -> torch.Tensor:
     """
     x = x - x.mean(dim=0, keepdim=True)
     q = min(4, min(x.shape[0], x.shape[1]))
-    u, s, _ = torch.pca_lowrank(x, q=q, center=False)
-    coords = x @ _[:, :2]
+    u, s, v = torch.pca_lowrank(x, q=q, center=False)
+    coords = x @ v[:, :2]
     return coords
 
 
@@ -282,6 +343,168 @@ def collect_hidden_vectors(
     return by_layer
 
 
+# ============================================================
+# Improvement 5: collect hidden states from generated tokens
+# ============================================================
+
+def collect_generated_hidden_vectors(
+    model,
+    tokenizer,
+    examples: List[Example],
+    device: torch.device,
+    layer_indices: List[int],
+    max_new_tokens: int = 20,
+    n_gen_positions: int = 5,
+) -> Dict[int, List[torch.Tensor]]:
+    """
+    Generate tokens, then run a forward pass on the full sequence
+    (input + generated) and extract hidden states at the first
+    n_gen_positions generated token positions.
+
+    Returns mean-pooled vector across those positions per example per layer.
+    """
+    by_layer: Dict[int, List[torch.Tensor]] = {layer: [] for layer in layer_indices}
+
+    model.eval()
+    with torch.no_grad():
+        for ex in examples:
+            input_ids = ex.input_ids.to(device)
+            attention_mask = ex.attention_mask.to(device)
+            input_len = input_ids.shape[1]
+
+            gen = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+
+            full_ids = gen[:, :input_len + n_gen_positions]
+            full_mask = torch.ones_like(full_ids)
+
+            outputs = model(
+                input_ids=full_ids,
+                attention_mask=full_mask,
+                output_hidden_states=True,
+                use_cache=False,
+            )
+
+            hidden_states = outputs.hidden_states
+            actual_gen_len = full_ids.shape[1] - input_len
+            if actual_gen_len < 1:
+                # Model generated nothing — use last input token as fallback
+                for layer in layer_indices:
+                    hs = hidden_states[layer + 1][0, -1].detach().to(dtype=torch.float32).cpu()
+                    by_layer[layer].append(hs)
+            else:
+                for layer in layer_indices:
+                    gen_hidden = hidden_states[layer + 1][0, input_len:input_len + actual_gen_len]
+                    pooled = gen_hidden.mean(dim=0).detach().to(dtype=torch.float32).cpu()
+                    by_layer[layer].append(pooled)
+
+    return by_layer
+
+
+# ============================================================
+# Improvement 1: confusion matrix
+# ============================================================
+
+def plot_confusion_matrix(
+    pred_labels: torch.Tensor,
+    true_ids: List[int],
+    persona_vocab: List[str],
+    layer: int,
+    outdir: Path,
+) -> None:
+    k = len(persona_vocab)
+    # Build confusion: rows = k-means cluster, cols = true persona
+    mat = np.zeros((k, k), dtype=int)
+    for pred, true in zip(pred_labels.tolist(), true_ids):
+        mat[pred][true] += 1
+
+    # Reorder rows by best-match to make it more readable:
+    # greedily assign each cluster to its dominant persona
+    row_order = []
+    used = set()
+    for _ in range(k):
+        best_score, best_row, best_col = -1, 0, 0
+        for r in range(k):
+            if r in used:
+                continue
+            for c in range(k):
+                if mat[r][c] > best_score:
+                    best_score = mat[r][c]
+                    best_row = r
+                    best_col = c
+            # Actually, just pick the row with the highest single-cell count
+        # Simpler: pick the unassigned row with the highest max
+        remaining = [r for r in range(k) if r not in used]
+        best_row = max(remaining, key=lambda r: mat[r].max())
+        row_order.append(best_row)
+        used.add(best_row)
+
+    mat_reordered = mat[row_order]
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(mat_reordered, aspect="auto", cmap="Blues")
+    plt.colorbar(im, ax=ax, label="count")
+
+    # Annotate cells
+    for i in range(k):
+        for j in range(k):
+            val = mat_reordered[i, j]
+            if val > 0:
+                ax.text(j, i, str(val), ha="center", va="center",
+                        color="white" if val > mat_reordered.max() / 2 else "black",
+                        fontsize=9)
+
+    ax.set_xticks(range(k))
+    ax.set_xticklabels(persona_vocab, rotation=45, ha="right")
+    ax.set_yticks(range(k))
+    ax.set_yticklabels([f"cluster {row_order[i]}" for i in range(k)])
+    ax.set_xlabel("True persona")
+    ax.set_ylabel("K-means cluster")
+    ax.set_title(f"K-means confusion matrix - layer {layer}")
+    plt.tight_layout()
+    plt.savefig(outdir / f"layer_{layer:02d}_confusion.png", dpi=180)
+    plt.close()
+
+
+# ============================================================
+# Improvement 4: linear probe
+# ============================================================
+
+def linear_probe_accuracy(
+    vectors: torch.Tensor,
+    labels: List[int],
+    n_folds: int = 5,
+    seed: int = 0,
+) -> float:
+    """
+    Stratified k-fold logistic regression accuracy.
+    """
+    X = vectors.numpy()
+    y = np.array(labels)
+
+    if len(set(labels)) < 2:
+        return float("nan")
+
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    accs = []
+    for train_idx, test_idx in skf.split(X, y):
+        clf = LogisticRegression(max_iter=2000, solver="lbfgs", C=1.0)
+        clf.fit(X[train_idx], y[train_idx])
+        accs.append(clf.score(X[test_idx], y[test_idx]))
+    return float(np.mean(accs))
+
+
+# ============================================================
+# Plotting helpers (unchanged + new)
+# ============================================================
+
 def maybe_generate_answers(
     model,
     tokenizer,
@@ -321,6 +544,7 @@ def plot_layer_projection(
     questions: List[str],
     layer: int,
     outdir: Path,
+    suffix: str = "",
 ) -> None:
     plt.figure(figsize=(9, 7))
     unique_personas = sorted(set(persona_names))
@@ -334,17 +558,18 @@ def plot_layer_projection(
             alpha=0.8,
         )
 
-        # Label only one point per question initial to avoid chaos.
         for i in idxs:
             label = questions[i][:12]
             plt.annotate(label, (coords[i, 0].item(), coords[i, 1].item()), fontsize=7, alpha=0.75)
 
-    plt.title(f"Persona activation clusters - layer {layer}")
+    title_suffix = f" ({suffix})" if suffix else ""
+    plt.title(f"Persona activation clusters - layer {layer}{title_suffix}")
     plt.xlabel("PC1")
     plt.ylabel("PC2")
     plt.legend(fontsize=8)
     plt.tight_layout()
-    plt.savefig(outdir / f"layer_{layer:02d}_pca.png", dpi=180)
+    fname = f"layer_{layer:02d}_pca{('_' + suffix) if suffix else ''}.png"
+    plt.savefig(outdir / fname, dpi=180)
     plt.close()
 
 
@@ -353,6 +578,7 @@ def save_centroid_heatmap(
     persona_names: List[str],
     layer: int,
     outdir: Path,
+    suffix: str = "",
 ) -> None:
     personas = sorted(set(persona_names))
     persona_to_vecs: Dict[str, List[torch.Tensor]] = {p: [] for p in personas}
@@ -372,10 +598,123 @@ def save_centroid_heatmap(
     plt.colorbar(label="cosine similarity")
     plt.xticks(range(len(personas)), personas, rotation=45, ha="right")
     plt.yticks(range(len(personas)), personas)
-    plt.title(f"Persona centroid similarity - layer {layer}")
+    title_suffix = f" ({suffix})" if suffix else ""
+    plt.title(f"Persona centroid similarity - layer {layer}{title_suffix}")
     plt.tight_layout()
-    plt.savefig(outdir / f"layer_{layer:02d}_centroid_similarity.png", dpi=180)
+    fname = f"layer_{layer:02d}_centroid_similarity{('_' + suffix) if suffix else ''}.png"
+    plt.savefig(outdir / fname, dpi=180)
     plt.close()
+
+
+# ============================================================
+# Improvement 3: null baseline — plot original vs alt centroids
+# ============================================================
+
+def plot_null_baseline_similarity(
+    orig_vectors: torch.Tensor,
+    alt_vectors: torch.Tensor,
+    orig_names: List[str],
+    alt_names: List[str],
+    layer: int,
+    outdir: Path,
+) -> Dict[str, float]:
+    """
+    For each persona, compute centroid from original wording and alt wording,
+    then measure cosine similarity between matching pairs vs non-matching pairs.
+    """
+    personas = sorted(set(orig_names))
+
+    def compute_centroids(vecs, names):
+        persona_to_vecs = {p: [] for p in personas}
+        for v, p in zip(vecs, names):
+            persona_to_vecs[p].append(v)
+        centroids = {}
+        for p in personas:
+            mat = torch.stack(persona_to_vecs[p], dim=0)
+            centroids[p] = F.normalize(mat.mean(dim=0), dim=0)
+        return centroids
+
+    orig_c = compute_centroids(orig_vectors, orig_names)
+    alt_c = compute_centroids(alt_vectors, alt_names)
+
+    # Build similarity matrix: orig centroids (rows) vs alt centroids (cols)
+    k = len(personas)
+    sim_mat = np.zeros((k, k))
+    for i, p1 in enumerate(personas):
+        for j, p2 in enumerate(personas):
+            sim_mat[i, j] = (orig_c[p1] @ alt_c[p2]).item()
+
+    same_persona_sims = [sim_mat[i, i] for i in range(k)]
+    diff_persona_sims = [sim_mat[i, j] for i in range(k) for j in range(k) if i != j]
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(sim_mat, aspect="auto", vmin=min(sim_mat.min(), 0), vmax=1.0)
+    plt.colorbar(im, ax=ax, label="cosine similarity")
+    for i in range(k):
+        for j in range(k):
+            ax.text(j, i, f"{sim_mat[i, j]:.2f}", ha="center", va="center",
+                    color="white" if sim_mat[i, j] > 0.7 else "black", fontsize=8)
+    ax.set_xticks(range(k))
+    ax.set_xticklabels([f"{p} (alt)" for p in personas], rotation=45, ha="right")
+    ax.set_yticks(range(k))
+    ax.set_yticklabels([f"{p} (orig)" for p in personas])
+    ax.set_title(f"Null baseline: original vs rephrased centroids - layer {layer}")
+    plt.tight_layout()
+    plt.savefig(outdir / f"layer_{layer:02d}_null_baseline.png", dpi=180)
+    plt.close()
+
+    return {
+        "null_same_persona_sim": float(np.mean(same_persona_sims)),
+        "null_diff_persona_sim": float(np.mean(diff_persona_sims)),
+        "null_gap": float(np.mean(same_persona_sims) - np.mean(diff_persona_sims)),
+    }
+
+
+# ============================================================
+# Main
+# ============================================================
+
+def analyze_layer(
+    vectors: torch.Tensor,
+    persona_names: List[str],
+    question_texts: List[str],
+    persona_ids: List[int],
+    question_ids: List[int],
+    persona_vocab: List[str],
+    layer: int,
+    outdir: Path,
+    seed: int,
+    suffix: str = "",
+) -> Dict:
+    """Run all per-layer analyses and return a metrics dict."""
+    coords = pca_2d_torch(vectors)
+    plot_layer_projection(coords, persona_names, question_texts, layer, outdir, suffix=suffix)
+    save_centroid_heatmap(vectors, persona_names, layer, outdir, suffix=suffix)
+
+    pred_labels, _ = kmeans_torch(
+        vectors,
+        k=len(persona_vocab),
+        n_iters=50,
+        seed=seed,
+    )
+    purity = clustering_purity(pred_labels, persona_ids, k=len(persona_vocab))
+    pair_metrics = pairwise_metrics_by_group(vectors, persona_ids, question_ids)
+
+    # Improvement 1: confusion matrix
+    plot_confusion_matrix(pred_labels, persona_ids, persona_vocab, layer, outdir)
+
+    # Improvement 4: linear probe
+    probe_acc = linear_probe_accuracy(vectors, persona_ids, n_folds=5, seed=seed)
+
+    row = {
+        "layer": layer,
+        "n_examples": vectors.shape[0],
+        "n_personas": len(persona_vocab),
+        "kmeans_persona_purity": purity,
+        "linear_probe_accuracy": probe_acc,
+        **pair_metrics,
+    }
+    return row
 
 
 def run(args: argparse.Namespace) -> None:
@@ -427,8 +766,10 @@ def run(args: argparse.Namespace) -> None:
         max_length=args.max_length,
     )
 
-    print(f"Built {len(examples)} persona-question prompts")
+    print(f"Built {len(examples)} persona-question prompts ({len(personas)} personas x {len(questions)} questions)")
 
+    # ---- Collect hidden vectors for main experiment ----
+    print("Collecting input-token hidden states...")
     by_layer = collect_hidden_vectors(
         model=model,
         examples=examples,
@@ -447,43 +788,145 @@ def run(args: argparse.Namespace) -> None:
     persona_ids = [persona_to_id[p] for p in persona_names]
     question_ids = [question_to_id[q] for q in question_texts]
 
+    # ---- Main per-layer analysis ----
     metrics_rows = []
-
     for layer in layer_indices:
-        vectors = torch.stack(by_layer[layer], dim=0)  # [n_examples, d]
+        vectors = torch.stack(by_layer[layer], dim=0)
         vectors = F.normalize(vectors, dim=-1)
 
-        coords = pca_2d_torch(vectors)
-        plot_layer_projection(coords, persona_names, question_texts, layer, outdir)
-        save_centroid_heatmap(vectors, persona_names, layer, outdir)
-
-        pred_labels, _ = kmeans_torch(
-            vectors,
-            k=len(persona_vocab),
-            n_iters=50,
-            seed=args.seed,
+        row = analyze_layer(
+            vectors, persona_names, question_texts,
+            persona_ids, question_ids, persona_vocab,
+            layer, outdir, args.seed,
         )
-        purity = clustering_purity(pred_labels, persona_ids, k=len(persona_vocab))
-        pair_metrics = pairwise_metrics_by_group(vectors, persona_ids, question_ids)
-
-        row = {
-            "layer": layer,
-            "n_examples": vectors.shape[0],
-            "n_personas": len(persona_vocab),
-            "kmeans_persona_purity": purity,
-            **pair_metrics,
-        }
         metrics_rows.append(row)
         print(json.dumps(row, indent=2))
 
+    # ---- Improvement 3: null baseline with rephrased personas ----
+    if not args.skip_null_baseline:
+        print("\nRunning null baseline (rephrased persona instructions)...")
+        personas_alt = {k: v for k, v in PERSONAS_ALT.items() if k in personas}
+        alt_examples = build_examples(
+            tokenizer=tokenizer,
+            personas=personas_alt,
+            questions=questions,
+            max_length=args.max_length,
+        )
+        alt_by_layer = collect_hidden_vectors(
+            model=model,
+            examples=alt_examples,
+            device=device,
+            dtype=model.dtype,
+            layer_indices=layer_indices,
+        )
+        alt_persona_names = [ex.persona_name for ex in alt_examples]
+
+        null_rows = []
+        for layer in layer_indices:
+            orig_vecs = torch.stack(by_layer[layer], dim=0)
+            orig_vecs = F.normalize(orig_vecs, dim=-1)
+            alt_vecs = torch.stack(alt_by_layer[layer], dim=0)
+            alt_vecs = F.normalize(alt_vecs, dim=-1)
+
+            null_metrics = plot_null_baseline_similarity(
+                orig_vecs, alt_vecs, persona_names, alt_persona_names, layer, outdir,
+            )
+            null_metrics["layer"] = layer
+            null_rows.append(null_metrics)
+            print(f"  Layer {layer}: same={null_metrics['null_same_persona_sim']:.4f} "
+                  f"diff={null_metrics['null_diff_persona_sim']:.4f} "
+                  f"gap={null_metrics['null_gap']:.4f}")
+
+        null_df = pd.DataFrame(null_rows).sort_values("layer")
+        null_df.to_csv(outdir / "null_baseline_metrics.csv", index=False)
+
+        # Plot null baseline gap across layers
+        plt.figure(figsize=(8, 5))
+        plt.plot(null_df["layer"], null_df["null_same_persona_sim"], marker="o", label="same persona (orig vs alt)")
+        plt.plot(null_df["layer"], null_df["null_diff_persona_sim"], marker="o", label="diff persona (orig vs alt)")
+        plt.xlabel("Layer")
+        plt.ylabel("Cosine similarity")
+        plt.title("Null baseline: do rephrased personas map to same representation?")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(outdir / "null_baseline_by_layer.png", dpi=180)
+        plt.close()
+
+    # ---- Improvement 5: generated-token activations ----
+    if not args.skip_gen_activations:
+        print("\nCollecting generated-token hidden states...")
+        gen_by_layer = collect_generated_hidden_vectors(
+            model=model,
+            tokenizer=tokenizer,
+            examples=examples,
+            device=device,
+            layer_indices=layer_indices,
+            max_new_tokens=args.max_new_tokens,
+            n_gen_positions=5,
+        )
+
+        gen_metrics_rows = []
+        for layer in layer_indices:
+            gen_vectors = torch.stack(gen_by_layer[layer], dim=0)
+            gen_vectors = F.normalize(gen_vectors, dim=-1)
+
+            coords = pca_2d_torch(gen_vectors)
+            plot_layer_projection(coords, persona_names, question_texts, layer, outdir, suffix="gen")
+            save_centroid_heatmap(gen_vectors, persona_names, layer, outdir, suffix="gen")
+
+            pred_labels, _ = kmeans_torch(gen_vectors, k=len(persona_vocab), n_iters=50, seed=args.seed)
+            purity = clustering_purity(pred_labels, persona_ids, k=len(persona_vocab))
+            probe_acc = linear_probe_accuracy(gen_vectors, persona_ids, n_folds=5, seed=args.seed)
+            pair_metrics = pairwise_metrics_by_group(gen_vectors, persona_ids, question_ids)
+
+            row = {
+                "layer": layer,
+                "source": "generated_tokens",
+                "kmeans_persona_purity": purity,
+                "linear_probe_accuracy": probe_acc,
+                **pair_metrics,
+            }
+            gen_metrics_rows.append(row)
+            print(f"  Layer {layer} (gen): purity={purity:.3f} probe={probe_acc:.3f} "
+                  f"persona_gap={pair_metrics['persona_separation_gap']:.4f}")
+
+        gen_df = pd.DataFrame(gen_metrics_rows).sort_values("layer")
+        gen_df.to_csv(outdir / "gen_token_metrics.csv", index=False)
+
+        # Comparison plot: input-token vs generated-token purity & probe accuracy
+        metrics_df_tmp = pd.DataFrame(metrics_rows).sort_values("layer")
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        axes[0].plot(metrics_df_tmp["layer"], metrics_df_tmp["kmeans_persona_purity"], marker="o", label="input token")
+        axes[0].plot(gen_df["layer"], gen_df["kmeans_persona_purity"], marker="s", label="generated tokens")
+        axes[0].set_xlabel("Layer")
+        axes[0].set_ylabel("K-means persona purity")
+        axes[0].set_title("Purity: input token vs generated tokens")
+        axes[0].legend()
+
+        axes[1].plot(metrics_df_tmp["layer"], metrics_df_tmp["linear_probe_accuracy"], marker="o", label="input token")
+        axes[1].plot(gen_df["layer"], gen_df["linear_probe_accuracy"], marker="s", label="generated tokens")
+        axes[1].set_xlabel("Layer")
+        axes[1].set_ylabel("Linear probe accuracy")
+        axes[1].set_title("Linear probe: input token vs generated tokens")
+        axes[1].legend()
+
+        plt.tight_layout()
+        plt.savefig(outdir / "input_vs_gen_comparison.png", dpi=180)
+        plt.close()
+
+    # ---- Save metrics and summary plots ----
     metrics_df = pd.DataFrame(metrics_rows).sort_values("layer")
     metrics_df.to_csv(outdir / "layer_metrics.csv", index=False)
 
-    plt.figure(figsize=(8, 5))
-    plt.plot(metrics_df["layer"], metrics_df["kmeans_persona_purity"], marker="o")
-    plt.xlabel("Layer")
-    plt.ylabel("K-means persona purity")
-    plt.title("Persona clustering strength by layer")
+    # Purity + linear probe plot
+    fig, ax1 = plt.subplots(figsize=(8, 5))
+    ax1.plot(metrics_df["layer"], metrics_df["kmeans_persona_purity"], marker="o", color="tab:blue", label="k-means purity")
+    ax1.plot(metrics_df["layer"], metrics_df["linear_probe_accuracy"], marker="s", color="tab:red", label="linear probe accuracy")
+    ax1.set_xlabel("Layer")
+    ax1.set_ylabel("Score")
+    ax1.set_title("Persona classification by layer")
+    ax1.legend()
     plt.tight_layout()
     plt.savefig(outdir / "persona_purity_by_layer.png", dpi=180)
     plt.close()
@@ -518,6 +961,13 @@ def run(args: argparse.Namespace) -> None:
         "n_questions": len(question_vocab),
         "n_examples": len(examples),
         "representation": "last input token hidden state before generation",
+        "improvements": [
+            "confusion_matrix",
+            "expanded_questions_40",
+            "null_baseline_rephrased_personas",
+            "linear_probe_logreg",
+            "generated_token_activations",
+        ],
     }
     with open(outdir / "run_config.json", "w") as f:
         json.dump(config, f, indent=2)
@@ -543,6 +993,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit-questions", type=int, default=0)
     parser.add_argument("--generate-answers", action="store_true")
     parser.add_argument("--max-new-tokens", type=int, default=80)
+    parser.add_argument("--skip-null-baseline", action="store_true", help="Skip rephrased-persona baseline")
+    parser.add_argument("--skip-gen-activations", action="store_true", help="Skip generated-token analysis")
     return parser.parse_args()
 
 
