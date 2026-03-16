@@ -116,7 +116,9 @@ class SteeringHook:
         self.handle: Optional[object] = None
 
     def __call__(self, module, input, output):
-        # output is a tuple: (hidden_states, ...) for LlamaDecoderLayer
+        # output may be a tuple (hidden_states, ...) or a plain Tensor
+        if isinstance(output, torch.Tensor):
+            return output + self.alpha * self.vector.to(output.device, dtype=output.dtype)
         hidden = output[0]
         hidden = hidden + self.alpha * self.vector.to(hidden.device, dtype=hidden.dtype)
         return (hidden,) + output[1:]
