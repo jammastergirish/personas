@@ -1,5 +1,8 @@
 # Persona Activation Clustering & Steering
 
+https://transformer-circuits.pub/2025/attribution-graphs/biology.html
+https://arxiv.org/pdf/2601.10387
+
 Do language models build internal representations of *who they're pretending to be*? And can we hijack those representations to steer the model into a persona *without any system prompt*?
 
 This experiment probes **Llama 3 8B Instruct** to find out. We give the model 8 different persona instructions (pirate, lawyer, scientist, comedian, etc.) across 40 diverse questions, extract hidden states at every layer, and ask: do personas form distinct geometric clusters in activation space?
