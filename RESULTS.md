@@ -34,13 +34,25 @@ Before the Persona Landscape experiments, we established baseline facts about pe
 ### Persona representations are real geometric objects
 
 - **99.3% linear probe accuracy from layer 8 onward** (mean ± 0.2% across 10 seeds). Every persona achieves 1.00 F1 from layer 8 onward. K-means purity is much noisier (0.74 ± 0.14 at layer 12) because persona clusters are linearly separable but not spherically compact.
+
+![Persona classification by layer](outputs/persona_clusters/persona_purity_by_layer.png)
+
 - **The model encodes semantic roles, not surface tokens.** Rephrased persona instructions ("You are a pirate" vs. "You are a seafaring buccaneer") converge to 0.96 cosine similarity at layer 31, while different personas with different wording drop to 0.47.
+
+![Null baseline: original vs rephrased personas at layer 31](outputs/persona_clusters/layer_31_null_baseline.png)
+
 - **A crossover occurs at layer 8-12**: early layers organize by question content (what is being asked), later layers organize by persona identity (who is answering). By layer 31, the persona gap is 8× the question gap.
+
+![Persona vs question separation by layer](outputs/persona_clusters/separation_gaps_by_layer.png)
 
 ### Persona subspace is low-dimensional
 
 - **6 dimensions capture 95% of persona centroid variance, 7 capture 99%** (out of 4096-d space, with 8 personas giving a theoretical max of 7). No single axis dominates — PC1 = 34%, PC2 = 22%, PC3 = 16%.
 - The full dataset (all 320 vectors including within-persona variation) needs ~40 dimensions for 95% — the extra ~30 encode question content, syntax, and topic.
+
+### PCA of persona clusters at layer 31
+
+![PCA layer 31](outputs/persona_clusters/layer_31_pca.png)
 
 ### Generated-token activations carry less persona signal
 
@@ -50,8 +62,6 @@ Before the Persona Landscape experiments, we established baseline facts about pe
 
 - Steering vectors (persona centroid minus global mean) injected via forward hooks shift the model's persona classification. Sweep over (layer, alpha) identifies optimal injection points per persona.
 - These vectors are the basis for all subsequent experiments.
-
-Full Phase 0 results with plots: see `outputs/persona_clusters/` and `outputs/persona_steering/`.
 
 ---
 
@@ -106,6 +116,12 @@ For each (persona, trait, level) triple — 10 personas × 8 traits × 2 levels 
 **SVD effective rank per trait** (layer 31): 7-8 out of 10 for all traits. Each persona inflects each trait differently with almost no redundancy.
 
 **Layer trajectory**: Cosine similarity starts near 1.0 at layer 0 and monotonically decreases to the values above at layer 31. Persona-specific modulation of traits builds progressively through the network.
+
+![Cross-persona cosine similarity by layer](outputs/prediction_1_trait_geometry/cosine_by_layer.png)
+
+![Cosine similarity heatmap at layer 31](outputs/prediction_1_trait_geometry/cosine_heatmap.png)
+
+![PCA of trait vectors colored by trait](outputs/prediction_1_trait_geometry/pca_by_trait.png)
 
 ### Analysis
 
@@ -177,6 +193,10 @@ Effective rank: **6** (95%), **7** (99%).
 
 Effective rank: **7** (95%), **9** (99%).
 
+![Trait SVD spectrum vs random baseline](outputs/oq2_dimensionality/trait_svd_spectrum.png)
+
+![Cumulative variance: traits vs personas vs random](outputs/oq2_dimensionality/trait_cumulative_variance.png)
+
 **Probe accuracy by k**:
 
 | k | Accuracy | vs. chance (10%) |
@@ -186,6 +206,8 @@ Effective rank: **7** (95%), **9** (99%).
 | 6 | 33.7% | +23.7% |
 | 7 | 36.4% | +26.4% |
 | 8 | 36.1% | +26.1% |
+
+![Probe accuracy by number of SVD components](outputs/oq2_dimensionality/per_component_probe_accuracy.png)
 
 ### Analysis
 
@@ -236,6 +258,10 @@ The framework claims Level 1 (weight space) defines the terrain and Level 2 (act
 All values within ~15% of the random baseline. No weight matrix shows systematic preferential alignment with persona directions.
 
 **V projection** is the only matrix consistently above baseline (0.000281 vs. 0.000244, a 15% elevation). All others are within noise.
+
+![Alignment by weight matrix](outputs/oq6_activation_vs_weight/alignment_by_weight_matrix.png)
+
+![Alignment profile by singular value index](outputs/oq6_activation_vs_weight/trait_alignment_by_singular_idx.png)
 
 ### Analysis
 
@@ -302,6 +328,10 @@ The framework paper reports directional reorientation during adversarial steerin
 **Norm trajectory**: Norms are nearly constant (158.9 → 163.3), confirming the transition is a **reorientation, not an amplification**.
 
 **Transition SVD**: Effective rank 1 at 90% variance, 2 at 95%. The transition sweeps along a single direction.
+
+![Angle vs alpha with sigmoid fit](outputs/prediction_2_basin_transitions/angle_vs_alpha_curves.png)
+
+![Transition trajectories in PCA space](outputs/prediction_2_basin_transitions/transition_trajectories_pca.png)
 
 ### Analysis
 
@@ -381,6 +411,12 @@ Effective rank: **3** at 95% variance.
 
 **Per-persona PCA**: PC1 = 74%, PC2 = 15%. Personas vary along one dominant axis in coupling space.
 
+![Global coupling matrix heatmap](outputs/oq1_coupling_coefficients/global_coupling_matrix.png)
+
+![Coupling SVD spectrum](outputs/oq1_coupling_coefficients/coupling_svd_spectrum.png)
+
+![Per-persona coupling PCA](outputs/oq1_coupling_coefficients/coupling_pca.png)
+
 ### Analysis
 
 **The prediction is strongly confirmed. Traits are coupled, and the coupling is structured.**
@@ -439,6 +475,10 @@ The framework claims that "between any two populated points there is a continuou
 Differences between categories: **< 1% on all metrics**.
 
 **Manifold SVD**: Effective rank **5** (95%), **7** (99%). Top singular value (85.1) is ~2× the second (43.8).
+
+![Coherence map in PCA space](outputs/oq3_coherence_manifold/coherence_map_pca.png)
+
+![Coherence vs distance from nearest known persona](outputs/oq3_coherence_manifold/coherence_vs_distance_from_known.png)
 
 ### Analysis
 
@@ -517,6 +557,14 @@ The framework paper reports that adversarial pressure introduced at turn 4 (afte
 **Probe flip rate**: **100%** at every turn for every persona. The steering is overwhelming — the model is fully classified as the adversary at all times.
 
 **Vulnerability rank trajectory (95% threshold)**: 91 → 72 → 54 → 44 → 34 → **26**.
+
+![Cohen's d by turn](outputs/prediction_3_self_reinforcement/cohens_d_by_turn.png)
+
+![Cohen's d by turn per persona](outputs/prediction_3_self_reinforcement/cohens_d_by_turn_per_persona.png)
+
+![Vulnerability subspace rank by turn](outputs/prediction_3_self_reinforcement/vulnerability_subspace_rank.png)
+
+![Turn trajectories in PCA space](outputs/prediction_3_self_reinforcement/turn_trajectories_pca.png)
 
 ### Analysis
 
