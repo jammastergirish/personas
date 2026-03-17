@@ -1,0 +1,49 @@
+{
+  "experiment": "prediction_1_trait_geometry",
+  "model_name": "meta-llama/Meta-Llama-3-8B-Instruct",
+  "device": "cuda",
+  "seed": 42,
+  "num_layers": 32,
+  "layer_indices": [
+    0,
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    28,
+    31
+  ],
+  "layer_stride": 4,
+  "analysis_layer": 31,
+  "personas": [
+    "assistant",
+    "pirate",
+    "lawyer",
+    "scientist",
+    "comedian",
+    "stoic",
+    "conspiracy_host",
+    "kind_teacher",
+    "drill_sergeant",
+    "diplomat"
+  ],
+  "traits": [
+    "honesty",
+    "assertiveness",
+    "warmth",
+    "deference",
+    "analytical_rigor",
+    "humor",
+    "suspicion",
+    "impulsivity"
+  ],
+  "n_personas": 10,
+  "n_traits": 8,
+  "n_questions": 40,
+  "n_examples": 6400,
+  "max_length": 512,
+  "limit_personas": 0,
+  "limit_questions": 0
+}

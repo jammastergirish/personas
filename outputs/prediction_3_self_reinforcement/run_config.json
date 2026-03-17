@@ -1,0 +1,44 @@
+{
+  "model_name": "meta-llama/Meta-Llama-3-8B-Instruct",
+  "device": "cuda",
+  "seed": 0,
+  "n_turns": 6,
+  "max_new_tokens": 80,
+  "n_personas": 8,
+  "personas": [
+    "assistant",
+    "comedian",
+    "conspiracy_host",
+    "kind_teacher",
+    "lawyer",
+    "pirate",
+    "scientist",
+    "stoic"
+  ],
+  "n_questions": 40,
+  "layer_stride": 4,
+  "best_layer": 31,
+  "layer_indices": [
+    0,
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    28,
+    31
+  ],
+  "steering_alpha": 10.0,
+  "adversarial_targets": {
+    "assistant": "pirate",
+    "comedian": "scientist",
+    "conspiracy_host": "scientist",
+    "kind_teacher": "pirate",
+    "lawyer": "pirate",
+    "pirate": "scientist",
+    "scientist": "pirate",
+    "stoic": "pirate"
+  },
+  "elapsed_seconds": 5733.4
+}

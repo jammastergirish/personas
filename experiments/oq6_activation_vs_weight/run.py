@@ -8,6 +8,7 @@
 #   "python-dotenv>=1.0",
 #   "accelerate",
 #   "numpy>=1.26",
+#   "scikit-learn>=1.4",
 # ]
 # ///
 
