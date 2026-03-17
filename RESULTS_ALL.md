@@ -27,6 +27,34 @@ These experiments operate entirely at Level 2 (activation space). They can confi
 
 ---
 
+## Phase 0: Foundational Observations (main.py + steer.py)
+
+Before the Persona Landscape experiments, we established baseline facts about persona representations in Llama 3 8B using clustering, linear probes, and steering vectors. These findings motivated the framework-testing experiments that follow.
+
+### Persona representations are real geometric objects
+
+- **99.3% linear probe accuracy from layer 8 onward** (mean ± 0.2% across 10 seeds). Every persona achieves 1.00 F1 from layer 8 onward. K-means purity is much noisier (0.74 ± 0.14 at layer 12) because persona clusters are linearly separable but not spherically compact.
+- **The model encodes semantic roles, not surface tokens.** Rephrased persona instructions ("You are a pirate" vs. "You are a seafaring buccaneer") converge to 0.96 cosine similarity at layer 31, while different personas with different wording drop to 0.47.
+- **A crossover occurs at layer 8-12**: early layers organize by question content (what is being asked), later layers organize by persona identity (who is answering). By layer 31, the persona gap is 8× the question gap.
+
+### Persona subspace is low-dimensional
+
+- **6 dimensions capture 95% of persona centroid variance, 7 capture 99%** (out of 4096-d space, with 8 personas giving a theoretical max of 7). No single axis dominates — PC1 = 34%, PC2 = 22%, PC3 = 16%.
+- The full dataset (all 320 vectors including within-persona variation) needs ~40 dimensions for 95% — the extra ~30 encode question content, syntax, and topic.
+
+### Generated-token activations carry less persona signal
+
+- Linear probe accuracy drops from 99.7% (last input token) to 92.5% (mean of first 5 generated tokens). The pre-generation last-input-token is the purest snapshot of persona intent.
+
+### Steering vectors work
+
+- Steering vectors (persona centroid minus global mean) injected via forward hooks shift the model's persona classification. Sweep over (layer, alpha) identifies optimal injection points per persona.
+- These vectors are the basis for all subsequent experiments.
+
+Full Phase 0 results with plots: see `outputs/persona_clusters/` and `outputs/persona_steering/`.
+
+---
+
 ## Experiment 1: Trait Geometry (Prediction 1)
 
 ### Hypothesis
@@ -564,6 +592,8 @@ All experiment outputs (CSVs, PNGs, configs) are in `outputs/<experiment_name>/`
 
 ```
 outputs/
+├── persona_clusters/              # Phase 0: probes, PCA, confusion matrices, null baseline
+├── persona_steering/              # Phase 0: steering vectors, sweep results, demos
 ├── prediction_1_trait_geometry/    # Cosine similarity, residual norms, SVD, PCA plots
 ├── oq2_dimensionality/            # SVD spectra, probe accuracy curves
 ├── oq6_activation_vs_weight/      # Weight alignment tables and plots
