@@ -4,7 +4,7 @@ Empirical tests of the [Persona Landscape framework](BLOGPOST.md) on **Llama 3 8
 
 ## Key findings
 
-See [RESULTS_ALL.md](RESULTS_ALL.md) for the full analysis with per-experiment Hypothesis / Operationalization / Results / Analysis / Limitations.
+See [RESULTS.md](RESULTS.md) for the full analysis with per-experiment Hypothesis / Operationalization / Results / Analysis / Limitations.
 
 **Supported:**
 - Personas occupy distinct basins (sigmoid transitions, R² = 0.98)
