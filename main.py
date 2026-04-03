@@ -1217,8 +1217,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-name",
         type=str,
-        default="meta-llama/Meta-Llama-3-8B-Instruct",
-        help="HF model name. Note: official Llama 3 release is 8B/70B, not 7B.",
+        default="google/gemma-4-E2B-it",
+        help="HF model name.",
     )
     parser.add_argument("--outdir", type=str, default="outputs/persona_clusters")
     parser.add_argument("--device", type=str, default=None, help="cpu, cuda, mps, or leave unset")
