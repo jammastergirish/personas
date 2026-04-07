@@ -3,17 +3,13 @@
 # Run all Persona Landscape experiments.
 #
 # Usage:
-#   ./run_all_experiments.sh                                        # full run (slow, hours)
-#   ./run_all_experiments.sh --model google/gemma-4-31b-it          # specify model
-#   ./run_all_experiments.sh --smoke                                # smoke test (2 personas, 5 questions)
-#   ./run_all_experiments.sh --phase 0                              # run only phase 0
-#   ./run_all_experiments.sh --phase 1                              # run only phase 1
-#   ./run_all_experiments.sh --only oq6                             # run a single experiment
+#   ./run_all_experiments.sh --model google/gemma-4-E4B-it             # specify model (required)
+#   ./run_all_experiments.sh --model google/gemma-4-E4B-it --smoke     # smoke test
+#   ./run_all_experiments.sh --model google/gemma-4-E4B-it --phase 0   # run only phase 0
+#   ./run_all_experiments.sh --model google/gemma-4-E4B-it --only oq6  # single experiment
 #
-# Results are saved to outputs/<experiment_name>/ with:
-#   - run_config.json   (parameters used)
-#   - *.csv             (raw data)
-#   - *.png             (visualizations)
+# Outputs are saved to outputs/<model_short_name>/<experiment_name>/
+# W&B runs are logged to the personas_original project.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -51,19 +47,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ---- Validate model ----
+if [[ -z "$MODEL" ]]; then
+    echo "Error: --model is required."
+    echo "Usage: ./run_all_experiments.sh --model <hf_model_id> [--smoke] [--phase N] [--only name]"
+    exit 1
+fi
+
+# Extract short model name (last part of HF ID) for output directories
+MODEL_SHORT="${MODEL##*/}"
+OUTBASE="outputs/${MODEL_SHORT}"
+echo "Model:   $MODEL"
+echo "Outputs: $OUTBASE/<experiment>/"
+echo ""
+
 # Smoke test flags
 LIMIT_FLAGS=""
 if [[ -n "$SMOKE" ]]; then
     LIMIT_FLAGS="--limit-personas 2 --limit-questions 5"
     echo "=== SMOKE TEST MODE (2 personas, 5 questions) ==="
-    echo ""
-fi
-
-# Model flag (forwarded to all scripts)
-MODEL_FLAG=""
-if [[ -n "$MODEL" ]]; then
-    MODEL_FLAG="--model-name $MODEL"
-    echo "Model: $MODEL"
     echo ""
 fi
 
@@ -83,10 +85,10 @@ run_experiment() {
     echo "============================================================"
     echo ""
 
-    uv run "$script" $MODEL_FLAG $LIMIT_FLAGS "$@" $EXTRA_ARGS
+    uv run "$script" --model-name "$MODEL" --outdir "${OUTBASE}/${name}" $LIMIT_FLAGS "$@" $EXTRA_ARGS
 
     echo ""
-    echo "  -> Results in outputs/$name/"
+    echo "  -> Results in ${OUTBASE}/${name}/"
     echo ""
 }
 
@@ -157,7 +159,6 @@ run_phase_3() {
 # ---- Main ----
 echo "Persona Landscape Experiments"
 echo "============================="
-echo "Results will be saved to outputs/<experiment_name>/"
 echo ""
 
 case "$PHASE" in
@@ -167,7 +168,6 @@ case "$PHASE" in
     3)     run_phase_3 ;;
     all)
         if [[ -n "$ONLY" ]]; then
-            # When --only is set, search all phases
             run_phase_0
             run_phase_1
             run_phase_2
@@ -187,5 +187,5 @@ esac
 echo ""
 echo "============================================================"
 echo "  All requested experiments complete."
-echo "  Results are in outputs/*/"
+echo "  Results are in ${OUTBASE}/*/"
 echo "============================================================"
