@@ -138,10 +138,13 @@ class SteeringHook:
 
 def get_layer_module(model, layer_idx: int):
     """Get the transformer layer module by index."""
-    if hasattr(model, "model"):
-        # LlamaForCausalLM wraps the base model
-        return model.model.layers[layer_idx]
-    return model.layers[layer_idx]
+    # Walk down to the layers list, handling different model architectures:
+    # Llama:  model.model.layers
+    # Gemma4: model.model.language_model.layers
+    inner = model.model if hasattr(model, "model") else model
+    if hasattr(inner, "language_model"):
+        inner = inner.language_model
+    return inner.layers[layer_idx]
 
 
 def generate_steered(

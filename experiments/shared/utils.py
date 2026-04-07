@@ -1,6 +1,7 @@
-"""Shared utilities: metrics, plotting, SVD helpers, W&B integration."""
+"""Shared utilities: metrics, plotting, SVD helpers, W&B integration, model loading."""
 from __future__ import annotations
 import json
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -9,6 +10,7 @@ import matplotlib.pyplot as plt
 import wandb
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 # ---- W&B helpers ----
@@ -58,6 +60,49 @@ def finish_wandb(outdir: Path) -> None:
         except Exception:
             pass
     wandb.finish()
+
+
+# ---- Model helpers ----
+
+
+def load_model_and_tokenizer(
+    model_name: str,
+    device: torch.device,
+    hf_token: Optional[str] = None,
+):
+    """Load model and tokenizer with correct dtype for the device."""
+    if hf_token is None:
+        hf_token = os.environ.get("HF_TOKEN")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model_kwargs = {"output_hidden_states": True}
+    if device.type == "cuda":
+        model_kwargs["dtype"] = (
+            torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        )
+        model_kwargs["device_map"] = "auto"
+    elif device.type == "mps":
+        model_kwargs["dtype"] = torch.float16
+    else:
+        model_kwargs["dtype"] = torch.float32
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, token=hf_token, **model_kwargs,
+    )
+    if device.type in {"cpu", "mps"}:
+        model.to(device)
+
+    return model, tokenizer
+
+
+def get_num_layers(model) -> int:
+    """Get number of hidden layers, handling nested configs (e.g. Gemma 4)."""
+    if hasattr(model.config, "text_config"):
+        return model.config.text_config.num_hidden_layers
+    return model.config.num_hidden_layers
 
 
 def cohens_d(group1: torch.Tensor, group2: torch.Tensor) -> float:

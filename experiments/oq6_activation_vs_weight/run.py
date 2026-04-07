@@ -65,7 +65,7 @@ from main import (
     set_seed,
 )
 from steer import compute_steering_vectors, get_layer_module
-from shared.utils import finish_wandb, init_wandb, save_run_config
+from shared.utils import finish_wandb, get_num_layers, init_wandb, load_model_and_tokenizer, save_run_config
 
 
 # ============================================================
@@ -263,33 +263,9 @@ def run(args: argparse.Namespace) -> None:
     hf_token = os.environ.get("HF_TOKEN")
 
     # ---- Load model & tokenizer ----
-    print(f"Loading tokenizer: {args.model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, token=hf_token)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    print(f"Loading model on {device}...")
-    model_kwargs = {"output_hidden_states": True}
-    if device.type == "cuda":
-        model_kwargs["dtype"] = (
-            torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        )
-        model_kwargs["device_map"] = "auto"
-    elif device.type == "mps":
-        model_kwargs["dtype"] = torch.float16
-    else:
-        model_kwargs["dtype"] = torch.float32
-
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name, token=hf_token, **model_kwargs
-    )
-    if device.type in {"cpu", "mps"}:
-        model.to(device)
-
-    if hasattr(model.config, "text_config"):
-        num_layers = model.config.text_config.num_hidden_layers
-    else:
-        num_layers = model.config.num_hidden_layers
+    print(f"\nLoading model: {args.model_name} on {device}...")
+    model, tokenizer = load_model_and_tokenizer(args.model_name, device, hf_token)
+    num_layers = get_num_layers(model)
     hidden_size = model.config.hidden_size
     layer_indices = sample_layers(num_layers=num_layers, stride=args.layer_stride)
 

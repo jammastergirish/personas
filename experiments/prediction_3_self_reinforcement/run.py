@@ -85,7 +85,9 @@ from experiments.shared.multi_turn import (
 from experiments.shared.utils import (
     cohens_d_multivariate,
     finish_wandb,
+    get_num_layers,
     init_wandb,
+    load_model_and_tokenizer,
     save_run_config,
     svd_analysis,
     effective_rank,
@@ -281,34 +283,11 @@ def run(args: argparse.Namespace) -> None:
     # ================================================================
     # 1. Load model and tokenizer
     # ================================================================
-    print(f"Loading tokenizer: {args.model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, token=hf_token)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    print(f"Loading model on {device}...")
-    model_kwargs = {"output_hidden_states": True}
-    if device.type == "cuda":
-        model_kwargs["dtype"] = (
-            torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        )
-        model_kwargs["device_map"] = "auto"
-    elif device.type == "mps":
-        model_kwargs["dtype"] = torch.float16
-    else:
-        model_kwargs["dtype"] = torch.float32
-
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name, token=hf_token, **model_kwargs,
-    )
-    if device.type in {"cpu", "mps"}:
-        model.to(device)
+    print(f"\nLoading model: {args.model_name} on {device}...")
+    model, tokenizer = load_model_and_tokenizer(args.model_name, device, hf_token)
+    num_layers = get_num_layers(model)
 
     dtype = model.dtype
-    if hasattr(model.config, "text_config"):
-        num_layers = model.config.text_config.num_hidden_layers
-    else:
-        num_layers = model.config.num_hidden_layers
     layer_indices = sample_layers(num_layers=num_layers, stride=args.layer_stride)
     best_layer = max(layer_indices)
 
