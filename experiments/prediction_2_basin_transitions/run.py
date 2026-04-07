@@ -260,7 +260,10 @@ def run(args: argparse.Namespace) -> None:
         model.to(device)
 
     dtype = model.dtype
-    num_layers = model.config.num_hidden_layers
+    if hasattr(model.config, "text_config"):
+        num_layers = model.config.text_config.num_hidden_layers
+    else:
+        num_layers = model.config.num_hidden_layers
     layer_indices = sample_layers(num_layers=num_layers, stride=args.layer_stride)
 
     questions = QUESTIONS[: args.limit_questions] if args.limit_questions > 0 else QUESTIONS
