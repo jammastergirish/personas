@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -81,6 +82,8 @@ from experiments.shared.multi_turn import (
 )
 from experiments.shared.utils import (
     cohens_d_multivariate,
+    finish_wandb,
+    init_wandb,
     save_run_config,
     svd_analysis,
     effective_rank,
@@ -670,6 +673,7 @@ def run(args: argparse.Namespace) -> None:
         "elapsed_seconds": round(elapsed, 1),
     }
     save_run_config(config, outdir)
+    init_wandb("prediction_3_self_reinforcement", config)
 
     # ================================================================
     # Summary
@@ -703,6 +707,7 @@ def run(args: argparse.Namespace) -> None:
                   f"turn {n_turns-1} = {rank_last[0]}")
 
     print(f"\nElapsed: {elapsed:.0f}s")
+    finish_wandb(outdir)
     print(f"Outputs written to: {outdir.resolve()}")
     print("  - cohens_d_by_turn.csv / .png")
     print("  - cohens_d_by_turn_per_persona.png")

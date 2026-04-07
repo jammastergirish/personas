@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "numpy>=1.26",
 #   "scikit-learn>=1.4",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -62,7 +63,7 @@ from main import (
     set_seed,
 )
 from steer import compute_steering_vectors, get_layer_module
-from shared.utils import save_run_config
+from shared.utils import finish_wandb, init_wandb, save_run_config
 
 
 # ============================================================
@@ -446,6 +447,8 @@ def run(args: argparse.Namespace) -> None:
         },
     }
     save_run_config(config, outdir)
+    init_wandb("oq6_activation_vs_weight", config)
+    finish_wandb(outdir)
     print(f"\nDone. Outputs in {outdir.resolve()}")
 
 

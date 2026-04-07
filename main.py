@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -35,6 +36,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
 from sklearn.model_selection import StratifiedKFold
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import wandb
 
 
 # ============================================================
@@ -914,6 +916,14 @@ def run(args: argparse.Namespace) -> None:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    model_tag = args.model_name.split("/")[-1]
+    wandb.init(
+        project="personas_original",
+        name=f"{model_tag}/phase0_clustering",
+        config=vars(args),
+        tags=[f"model:{model_tag}", "experiment:phase0_clustering"],
+    )
+
     hf_token = os.environ.get("HF_TOKEN")
 
     print(f"Loading tokenizer: {args.model_name}")
@@ -937,7 +947,10 @@ def run(args: argparse.Namespace) -> None:
     if device.type in {"cpu", "mps"}:
         model.to(device)
 
-    num_layers = model.config.num_hidden_layers
+    if hasattr(model.config, "text_config"):
+        num_layers = model.config.text_config.num_hidden_layers
+    else:
+        num_layers = model.config.num_hidden_layers
     if args.all_layers:
         layer_indices = list(range(num_layers))
     else:
@@ -991,6 +1004,7 @@ def run(args: argparse.Namespace) -> None:
             layer, outdir, args.seed, n_seeds=args.n_seeds,
         )
         metrics_rows.append(row)
+        wandb.log({f"layer/{k}": v for k, v in row.items()})
         print(json.dumps({k: v for k, v in row.items() if not k.startswith("f1_")}, indent=2))
 
     # ---- Improvement 3: null baseline with rephrased personas ----
@@ -1208,6 +1222,16 @@ def run(args: argparse.Namespace) -> None:
     }
     with open(outdir / "run_config.json", "w") as f:
         json.dump(config, f, indent=2)
+
+    # Log all outputs to W&B
+    for png in sorted(outdir.glob("*.png")):
+        wandb.log({png.stem: wandb.Image(str(png))})
+    for csv_file in sorted(outdir.glob("*.csv")):
+        try:
+            wandb.log({csv_file.stem: wandb.Table(dataframe=pd.read_csv(csv_file))})
+        except Exception:
+            pass
+    wandb.finish()
 
     print(f"\nDone. Outputs written to: {outdir.resolve()}")
 

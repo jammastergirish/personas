@@ -3,11 +3,12 @@
 # Run all Persona Landscape experiments.
 #
 # Usage:
-#   ./run_all_experiments.sh                  # full run (slow, hours)
-#   ./run_all_experiments.sh --smoke          # smoke test (2 personas, 5 questions)
-#   ./run_all_experiments.sh --phase 1        # run only phase 1
-#   ./run_all_experiments.sh --phase 2        # run only phase 2
-#   ./run_all_experiments.sh --only oq6       # run a single experiment
+#   ./run_all_experiments.sh                                        # full run (slow, hours)
+#   ./run_all_experiments.sh --model google/gemma-4-31b-it          # specify model
+#   ./run_all_experiments.sh --smoke                                # smoke test (2 personas, 5 questions)
+#   ./run_all_experiments.sh --phase 0                              # run only phase 0
+#   ./run_all_experiments.sh --phase 1                              # run only phase 1
+#   ./run_all_experiments.sh --only oq6                             # run a single experiment
 #
 # Results are saved to outputs/<experiment_name>/ with:
 #   - run_config.json   (parameters used)
@@ -21,6 +22,7 @@ cd "$(dirname "$0")"
 SMOKE=""
 PHASE="all"
 ONLY=""
+MODEL=""
 EXTRA_ARGS=""
 
 # ---- Parse args ----
@@ -38,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             ONLY="$2"
             shift 2
             ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
         *)
             EXTRA_ARGS="$EXTRA_ARGS $1"
             shift
@@ -50,6 +56,14 @@ LIMIT_FLAGS=""
 if [[ -n "$SMOKE" ]]; then
     LIMIT_FLAGS="--limit-personas 2 --limit-questions 5"
     echo "=== SMOKE TEST MODE (2 personas, 5 questions) ==="
+    echo ""
+fi
+
+# Model flag (forwarded to all scripts)
+MODEL_FLAG=""
+if [[ -n "$MODEL" ]]; then
+    MODEL_FLAG="--model-name $MODEL"
+    echo "Model: $MODEL"
     echo ""
 fi
 
@@ -69,11 +83,22 @@ run_experiment() {
     echo "============================================================"
     echo ""
 
-    uv run "$script" $LIMIT_FLAGS "$@" $EXTRA_ARGS
+    uv run "$script" $MODEL_FLAG $LIMIT_FLAGS "$@" $EXTRA_ARGS
 
     echo ""
     echo "  -> Results in outputs/$name/"
     echo ""
+}
+
+# ---- Phase 0: Clustering & steering (main.py + steer.py) ----
+run_phase_0() {
+    echo ""
+    echo "############################################################"
+    echo "#  PHASE 0: Clustering & steering vectors                  #"
+    echo "############################################################"
+
+    run_experiment "persona_clusters" main.py
+    run_experiment "persona_steering" steer.py
 }
 
 # ---- Phase 1: Fast, foundational experiments ----
@@ -136,22 +161,25 @@ echo "Results will be saved to outputs/<experiment_name>/"
 echo ""
 
 case "$PHASE" in
+    0)     run_phase_0 ;;
     1)     run_phase_1 ;;
     2)     run_phase_2 ;;
     3)     run_phase_3 ;;
     all)
         if [[ -n "$ONLY" ]]; then
             # When --only is set, search all phases
+            run_phase_0
             run_phase_1
             run_phase_2
         else
+            run_phase_0
             run_phase_1
             run_phase_2
             run_phase_3
         fi
         ;;
     *)
-        echo "Unknown phase: $PHASE (use 1, 2, 3, or all)"
+        echo "Unknown phase: $PHASE (use 0, 1, 2, 3, or all)"
         exit 1
         ;;
 esac

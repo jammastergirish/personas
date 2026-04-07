@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -76,6 +77,8 @@ from shared.trait_config import (
 )
 from shared.utils import (
     effective_rank,
+    finish_wandb,
+    init_wandb,
     plot_svd_spectrum,
     save_run_config,
     svd_analysis,
@@ -779,6 +782,7 @@ def run(args: argparse.Namespace) -> None:
         ) if (df["point_type"] == "random").any() else None,
     }
     save_run_config(config, outdir)
+    init_wandb("oq3_coherence_manifold", config)
     print(f"\n  Saved run_config.json")
 
     # ==================================================================
@@ -799,6 +803,7 @@ def run(args: argparse.Namespace) -> None:
                   f"mean_conf={sub['probe_confidence'].mean():.3f}")
     print(f"  Manifold effective rank (95%): {eff_rank_95}")
     print(f"  Manifold effective rank (99%): {eff_rank_99}")
+    finish_wandb(outdir)
     print(f"\n  Outputs saved to: {outdir.resolve()}")
 
 

@@ -23,30 +23,26 @@ See [RESULTS.md](RESULTS.md) for the full analysis with per-experiment Hypothesi
 
 ## Experiments
 
-| Experiment | Script | What it tests |
-|---|---|---|
-| Phase 0: Clustering & Steering | `main.py`, `steer.py` | Do personas form geometric clusters? Can steering vectors shift persona? |
-| Prediction 1: Trait Geometry | `experiments/prediction_1_trait_geometry/run.py` | Are trait directions shared across personas? |
-| OQ2: Dimensionality | `experiments/oq2_dimensionality/run.py` | How many dimensions does the landscape have? |
-| OQ6: Activation vs. Weight | `experiments/oq6_activation_vs_weight/run.py` | Do steering vectors align with weight matrix structure? |
-| Prediction 2: Basin Transitions | `experiments/prediction_2_basin_transitions/run.py` | Do personas occupy discrete basins with sigmoid transitions? |
-| OQ1: Coupling Coefficients | `experiments/oq1_coupling_coefficients/run.py` | When you steer one trait, how much do others move? |
-| OQ3: Coherence Manifold | `experiments/oq3_coherence_manifold/run.py` | Do arbitrary trait-space points produce coherent output? |
-| Prediction 3: Self-Reinforcement | `experiments/prediction_3_self_reinforcement/run.py` | Does generation reinforce the current basin position? |
+| Experiment | Script | Phase | What it tests |
+|---|---|---|---|
+| Clustering & Steering | `main.py`, `steer.py` | 0 | Do personas form geometric clusters? Can steering vectors shift persona? |
+| Prediction 1: Trait Geometry | `experiments/prediction_1_trait_geometry/run.py` | 1 | Are trait directions shared across personas? |
+| OQ2: Dimensionality | `experiments/oq2_dimensionality/run.py` | 1 | How many dimensions does the landscape have? |
+| OQ6: Activation vs. Weight | `experiments/oq6_activation_vs_weight/run.py` | 1 | Do steering vectors align with weight matrix structure? |
+| Prediction 2: Basin Transitions | `experiments/prediction_2_basin_transitions/run.py` | 1 | Do personas occupy discrete basins with sigmoid transitions? |
+| OQ1: Coupling Coefficients | `experiments/oq1_coupling_coefficients/run.py` | 2 | When you steer one trait, how much do others move? |
+| OQ3: Coherence Manifold | `experiments/oq3_coherence_manifold/run.py` | 2 | Do arbitrary trait-space points produce coherent output? |
+| Prediction 3: Self-Reinforcement | `experiments/prediction_3_self_reinforcement/run.py` | 2 | Does generation reinforce the current basin position? |
 
 ## Quick start
 
 ```bash
 # Requires a HuggingFace token with Llama 3 access
+# W&B API key is optional but recommended for experiment tracking
 echo "HF_TOKEN=hf_your_token" > .env
+echo "WANDB_API_KEY=your_key" >> .env
 
-# Phase 0: clustering & probing (~40 min on a single GPU)
-uv run main.py
-
-# Phase 0: steering vectors
-uv run steer.py
-
-# Run all Persona Landscape experiments (hours)
+# Run everything: Phase 0 (clustering + steering) + all experiments
 ./run_all_experiments.sh
 
 # Smoke test (2 personas, 5 questions)
@@ -56,8 +52,13 @@ uv run steer.py
 ./run_all_experiments.sh --only oq1_coupling_coefficients
 
 # Run by phase
+./run_all_experiments.sh --phase 0   # clustering & steering (main.py + steer.py)
 ./run_all_experiments.sh --phase 1   # foundational
 ./run_all_experiments.sh --phase 2   # coupling, coherence, multi-turn
+
+# Or run Phase 0 scripts individually
+uv run main.py
+uv run steer.py
 ```
 
 ## Personas
@@ -102,6 +103,17 @@ outputs/
 2. Compute steering vectors: `steering_vec = mean(persona_activations) - baseline`
 3. Inject via forward hook: add `alpha * steering_vec` to the residual stream at the target layer
 4. Evaluate: measure persona classifier flip rate, cosine displacement, generated text quality
+
+## Experiment tracking (W&B)
+
+All scripts log to the `personas_original` Weights & Biases project. Each run is tagged with `model:<model_name>` and `experiment:<experiment_name>` for easy filtering.
+
+Logged per run:
+- Run config (model, device, seed, layer stride, limits, etc.)
+- All PNG visualizations as W&B Images
+- All CSV metric tables as W&B Tables
+
+Set `WANDB_API_KEY` in `.env` or run `wandb login` before your first run.
 
 ## Requirements
 

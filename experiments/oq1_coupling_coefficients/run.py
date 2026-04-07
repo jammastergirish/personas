@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -95,6 +96,8 @@ from shared.trait_vectors import (
     project_onto_trait_basis,
 )
 from shared.utils import (
+    finish_wandb,
+    init_wandb,
     plot_heatmap,
     plot_pca_scatter,
     plot_svd_spectrum,
@@ -561,6 +564,7 @@ def run(args: argparse.Namespace) -> None:
         "limit_questions": args.limit_questions,
     }
     save_run_config(config, outdir)
+    init_wandb("oq1_coupling_coefficients", config)
 
     # ==================================================================
     # Summary
@@ -595,6 +599,7 @@ def run(args: argparse.Namespace) -> None:
                 print(f"  steer {traits_to_use[i]:20s} -> {traits_to_use[j]:20s}: "
                       f"{global_coupling[i, j]:+.4f}")
 
+    finish_wandb(outdir)
     print(f"\nAll outputs saved to: {outdir.resolve()}")
 
 

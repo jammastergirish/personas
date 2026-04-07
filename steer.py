@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -40,6 +41,7 @@ import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import wandb
 
 from main import (
     PERSONAS,
@@ -731,6 +733,14 @@ def run(args: argparse.Namespace) -> None:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    model_tag = args.model_name.split("/")[-1]
+    wandb.init(
+        project="personas_original",
+        name=f"{model_tag}/phase0_steering",
+        config=vars(args),
+        tags=[f"model:{model_tag}", "experiment:phase0_steering"],
+    )
+
     hf_token = os.environ.get("HF_TOKEN")
 
     print(f"Loading tokenizer: {args.model_name}")
@@ -914,6 +924,30 @@ def run(args: argparse.Namespace) -> None:
     }
     with open(outdir / "steer_config.json", "w") as f:
         json.dump(config, f, indent=2)
+
+    # Log best configs as summary metrics
+    for p, (layer, alpha) in best_configs.items():
+        sub = all_df[(all_df["target_persona"] == p) &
+                     (all_df["steer_layer"] == layer) &
+                     (all_df["alpha"] == alpha)]
+        if len(sub) > 0:
+            row = sub.iloc[0]
+            wandb.log({
+                f"best/{p}/layer": layer,
+                f"best/{p}/alpha": alpha,
+                f"best/{p}/flip_rate": row["flip_rate"],
+                f"best/{p}/target_prob": row["target_prob"],
+            })
+
+    # Log all outputs to W&B
+    for png in sorted(outdir.glob("*.png")):
+        wandb.log({png.stem: wandb.Image(str(png))})
+    for csv_file in sorted(outdir.glob("*.csv")):
+        try:
+            wandb.log({csv_file.stem: wandb.Table(dataframe=pd.read_csv(csv_file))})
+        except Exception:
+            pass
+    wandb.finish()
 
     print(f"\nDone. Outputs written to: {outdir.resolve()}")
 

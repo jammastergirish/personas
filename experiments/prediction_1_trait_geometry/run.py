@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -90,6 +91,8 @@ from shared.trait_vectors import (
     cross_persona_cosine_similarity,
 )
 from shared.utils import (
+    finish_wandb,
+    init_wandb,
     plot_heatmap,
     plot_pca_scatter,
     plot_svd_spectrum,
@@ -543,6 +546,7 @@ def run(args: argparse.Namespace) -> None:
         "limit_questions": args.limit_questions,
     }
     save_run_config(config, outdir)
+    init_wandb("prediction_1_trait_geometry", config)
 
     # ---- Summary ---------------------------------------------------------
     print(f"\n{'=' * 60}")
@@ -570,6 +574,7 @@ def run(args: argparse.Namespace) -> None:
             rank = len(cumvar)
         print(f"  {trait:20s}  rank = {rank}")
 
+    finish_wandb(outdir)
     print(f"\nAll outputs saved to: {outdir.resolve()}")
 
 

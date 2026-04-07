@@ -1,12 +1,63 @@
-"""Shared utilities: metrics, plotting, SVD helpers."""
+"""Shared utilities: metrics, plotting, SVD helpers, W&B integration."""
 from __future__ import annotations
 import json
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import wandb
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+
+# ---- W&B helpers ----
+
+WANDB_PROJECT = "personas_original"
+
+
+def init_wandb(experiment_name: str, config: dict) -> None:
+    """Initialize a W&B run for an experiment."""
+    model_tag = config.get("model_name", "unknown").split("/")[-1]
+    wandb.init(
+        project=WANDB_PROJECT,
+        name=f"{model_tag}/{experiment_name}",
+        config=config,
+        tags=[f"model:{model_tag}", f"experiment:{experiment_name}"],
+    )
+
+
+def log_wandb_metrics(metrics: dict, step: Optional[int] = None) -> None:
+    """Log scalar metrics to the active W&B run."""
+    if wandb.run is not None:
+        wandb.log(metrics, step=step)
+
+
+def log_wandb_image(key: str, path: Path) -> None:
+    """Log a single image to W&B."""
+    if wandb.run is not None and path.exists():
+        wandb.log({key: wandb.Image(str(path))})
+
+
+def log_wandb_table(key: str, df: pd.DataFrame) -> None:
+    """Log a DataFrame as a W&B table."""
+    if wandb.run is not None:
+        wandb.log({key: wandb.Table(dataframe=df)})
+
+
+def finish_wandb(outdir: Path) -> None:
+    """Log all PNGs and CSVs from outdir, then finish the W&B run."""
+    if wandb.run is None:
+        return
+    for png in sorted(outdir.glob("*.png")):
+        wandb.log({png.stem: wandb.Image(str(png))})
+    for csv_file in sorted(outdir.glob("*.csv")):
+        try:
+            df = pd.read_csv(csv_file)
+            wandb.log({csv_file.stem: wandb.Table(dataframe=df)})
+        except Exception:
+            pass
+    wandb.finish()
 
 
 def cohens_d(group1: torch.Tensor, group2: torch.Tensor) -> float:

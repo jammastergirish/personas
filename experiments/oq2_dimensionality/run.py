@@ -9,6 +9,7 @@
 #   "accelerate",
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -68,6 +69,8 @@ from shared.trait_config import (
 )
 from shared.utils import (
     effective_rank,
+    finish_wandb,
+    init_wandb,
     plot_svd_spectrum,
     save_run_config,
     svd_analysis,
@@ -673,6 +676,7 @@ def run(args: argparse.Namespace) -> None:
         "trait_vectors_path": args.trait_vectors_path,
     }
     save_run_config(config, outdir)
+    init_wandb("oq2_dimensionality", config)
 
     # ==================================================================
     # Summary
@@ -689,6 +693,7 @@ def run(args: argparse.Namespace) -> None:
     for r in probe_results:
         marker = " <-- 95% var" if r["k"] == trait_eff_rank_95 else ""
         print(f"    k={r['k']}: {r['mean_accuracy']:.4f} +/- {r['std_accuracy']:.4f}{marker}")
+    finish_wandb(outdir)
     print(f"\n  Outputs saved to: {outdir.resolve()}")
 
 

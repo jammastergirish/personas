@@ -10,6 +10,7 @@
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
 #   "scipy>=1.12",
+#   "wandb>=0.16",
 # ]
 # ///
 
@@ -72,6 +73,7 @@ from steer import (
     compute_steering_vectors,
     get_layer_module,
 )
+from shared.utils import finish_wandb, init_wandb
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -521,6 +523,7 @@ def run(args: argparse.Namespace) -> None:
     }
     with open(outdir / "run_config.json", "w") as f:
         json.dump(config, f, indent=2)
+    init_wandb("prediction_2_basin_transitions", config)
 
     # ================================================================
     # Summary
@@ -537,6 +540,7 @@ def run(args: argparse.Namespace) -> None:
         print(f"Transition sharpness: {sigmoid_params['transition_sharpness']:.2f} deg/alpha")
         print(f"R^2: {sigmoid_params['r_squared']:.4f}")
     print(f"SVD effective rank (95%): {svd_df[svd_df['threshold'] == 0.95]['effective_rank'].iloc[0]}")
+    finish_wandb(outdir)
     print(f"\nOutputs written to: {outdir.resolve()}")
     print("  - angle_vs_alpha_curves.png")
     print("  - norm_vs_alpha.png")
