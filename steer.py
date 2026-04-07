@@ -10,6 +10,7 @@
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
 #   "wandb>=0.16",
+#   "tqdm>=4.66",
 # ]
 # ///
 
@@ -40,6 +41,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import wandb
 
@@ -219,7 +221,7 @@ def collect_steered_hidden(
     model.eval()
     try:
         with torch.no_grad():
-            for ex in examples:
+            for ex in tqdm(examples, desc="Steered forward pass", leave=False):
                 input_ids = ex.input_ids.to(device)
                 attention_mask = ex.attention_mask.to(device)
 

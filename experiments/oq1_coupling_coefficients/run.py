@@ -10,6 +10,7 @@
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
 #   "wandb>=0.16",
+#   "tqdm>=4.66",
 # ]
 # ///
 
@@ -67,6 +68,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.decomposition import PCA
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Project imports
@@ -338,13 +340,12 @@ def run(args: argparse.Namespace) -> None:
     # coupling[persona][steer_trait][measure_trait] = mean shift
     coupling: Dict[str, Dict[str, Dict[str, float]]] = {}
 
-    for persona in personas_to_use:
-        print(f"\n  Persona: {persona}")
+    for persona in tqdm(personas_to_use, desc="Personas"):
         coupling[persona] = {}
         persona_examples = examples_by_persona[persona]
         unsteered_coords = unsteered_coords_by_persona[persona]  # [n_q, n_traits]
 
-        for steer_trait in traits_to_use:
+        for steer_trait in tqdm(traits_to_use, desc=f"  {persona} traits", leave=False):
             steer_vec = trait_vecs_at_layer[steer_trait]
 
             # Collect steered hidden states

@@ -10,6 +10,7 @@
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
 #   "wandb>=0.16",
+#   "tqdm>=4.66",
 # ]
 # ///
 
@@ -55,6 +56,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from main import (
@@ -635,7 +637,7 @@ def run(args: argparse.Namespace) -> None:
     rows = []
     all_hiddens = []
 
-    for idx in range(len(trait_points)):
+    for idx in tqdm(range(len(trait_points)), desc="Sampling trait space"):
         alphas = trait_points[idx]
         label = point_labels[idx]
 

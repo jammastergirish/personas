@@ -10,6 +10,7 @@
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
 #   "wandb>=0.16",
+#   "tqdm>=4.66",
 # ]
 # ///
 
@@ -65,6 +66,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Project imports

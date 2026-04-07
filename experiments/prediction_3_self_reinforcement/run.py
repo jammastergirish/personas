@@ -10,6 +10,7 @@
 #   "scikit-learn>=1.4",
 #   "numpy>=1.26",
 #   "wandb>=0.16",
+#   "tqdm>=4.66",
 # ]
 # ///
 
@@ -59,6 +60,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from main import (
@@ -388,6 +390,7 @@ def run(args: argparse.Namespace) -> None:
     total_combos = len(persona_vocab) * len(questions)
     combo_idx = 0
 
+    pbar = tqdm(total=total_combos, desc="Self-reinforcement")
     for persona in persona_vocab:
         system_prompt = personas[persona]
         adv_persona = adversarial_targets[persona]
@@ -396,8 +399,8 @@ def run(args: argparse.Namespace) -> None:
 
         for q_idx, first_question in enumerate(questions):
             combo_idx += 1
-            print(f"\n[{combo_idx}/{total_combos}] Persona={persona}, Q={q_idx} "
-                  f"(adv={adv_persona})")
+            pbar.update(1)
+            pbar.set_postfix(persona=persona, q=q_idx)
 
             conversation_history: List[Dict[str, str]] = []
 

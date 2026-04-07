@@ -11,6 +11,7 @@
 #   "numpy>=1.26",
 #   "scipy>=1.12",
 #   "wandb>=0.16",
+#   "tqdm>=4.66",
 # ]
 # ///
 
@@ -67,6 +68,7 @@ from main import (
     sample_layers,
     set_seed,
 )
+from tqdm import tqdm
 from steer import (
     SteeringHook,
     collect_steered_hidden,
@@ -331,8 +333,7 @@ def run(args: argparse.Namespace) -> None:
     mean_norms: List[float] = []
     std_norms: List[float] = []
 
-    for alpha in alphas:
-        print(f"  alpha={alpha:5.1f} ... ", end="", flush=True)
+    for alpha in tqdm(alphas, desc="Alpha sweep"):
         steered = collect_steered_hidden(
             model, tokenizer, pirate_examples, device, dtype,
             probe_layer=best_layer, steer_layer=best_layer,
