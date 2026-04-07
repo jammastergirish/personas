@@ -387,12 +387,12 @@ def run(args: argparse.Namespace) -> None:
     print(f"Loading model on {device}...")
     model_kwargs = {"output_hidden_states": True}
     if device.type == "cuda":
-        model_kwargs["torch_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        model_kwargs["dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         model_kwargs["device_map"] = "auto"
     elif device.type == "mps":
-        model_kwargs["torch_dtype"] = torch.float16
+        model_kwargs["dtype"] = torch.float16
     else:
-        model_kwargs["torch_dtype"] = torch.float32
+        model_kwargs["dtype"] = torch.float32
 
     model = AutoModelForCausalLM.from_pretrained(args.model_name, token=hf_token, **model_kwargs)
     if device.type in {"cpu", "mps"}:
